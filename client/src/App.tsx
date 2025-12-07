@@ -1,9 +1,10 @@
 import React, { useState, useCallback, useRef } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
+import { GlobalWorkerOptions } from 'pdfjs-dist';
 import './App.css';
 
-// Configure PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+// Configure PDF.js worker to use local file
+GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
 
 interface UploadedFile {
   file: File;
