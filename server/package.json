@@ -1,7 +1,7 @@
 {
-  "name": "pdf-annotation-backend",
+  "name": "pdf-annotation-server",
   "version": "1.0.0",
-  "description": "Backend server for PDF annotation service",
+  "description": "Server for PDF annotation service",
   "main": "dist/index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
