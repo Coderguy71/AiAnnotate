@@ -316,7 +316,7 @@ async function drawHighlight(
   page: any,
   position: TextPosition,
   color: AnnotationColor,
-  pageWidth: number,
+  _pageWidth: number,
   pageHeight: number
 ): Promise<void> {
   const x = position.x || 50;
@@ -342,7 +342,7 @@ async function drawUnderline(
   page: any,
   position: TextPosition,
   color: AnnotationColor,
-  pageWidth: number,
+  _pageWidth: number,
   pageHeight: number
 ): Promise<void> {
   const x = position.x || 50;
@@ -436,9 +436,3 @@ async function drawComment(
   }
 }
 
-/**
- * Converts AnnotationColor to pdf-lib RGB
- */
-function toRGB(color: AnnotationColor) {
-  return rgb(color.r, color.g, color.b);
-}

@@ -34,22 +34,10 @@ import { ExtractedText, PageText, PDFMetadata } from '../types/annotations';
  */
 export async function extractTextFromPDF(pdfBuffer: Buffer): Promise<ExtractedText> {
   try {
-    // Parse PDF with page-level text extraction
-    const data = await pdf(pdfBuffer, {
-      // Custom page render function to extract text per page
-      pagerender: async (pageData: any) => {
-        const textContent = await pageData.getTextContent();
-        const text = textContent.items
-          .map((item: any) => item.str)
-          .join(' ');
-        return text;
-      }
-    });
-
     // Extract pages with individual text content
     const pages: PageText[] = [];
     
-    // Re-parse to get individual page texts
+    // Parse to get individual page texts
     const pdfData = await pdf(pdfBuffer);
     
     // pdf-parse doesn't directly provide per-page text, so we need to work around this

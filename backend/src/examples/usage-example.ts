@@ -49,18 +49,6 @@ async function example2_formatForAI() {
   console.log(promptContext);
   
   // This can now be used with Groq or other AI services
-  const aiPrompt = `
-Analyze the following document and suggest key points to highlight:
-
-${promptContext}
-
-Please identify:
-1. Main topics or headings
-2. Important findings or conclusions
-3. Key statistics or data points
-4. Action items or recommendations
-`;
-  
   console.log('\nReady to send to AI service');
 }
 
@@ -178,7 +166,7 @@ async function example6_aiPoweredAnnotation() {
   
   // Step 1: Extract text
   const extracted = await extractTextFromPDF(pdfBuffer);
-  const promptContext = formatForPrompt(extracted, { maxCharsPerPage: 1000 });
+  console.log(`Extracted ${extracted.totalPages} pages from PDF`);
   
   // Step 2: Send to Groq (placeholder - implement with actual Groq SDK)
   console.log('Sending to Groq for analysis...');
