@@ -38,13 +38,7 @@ This application provides a complete PDF workflow solution:
 
 2. **Install dependencies**
    ```bash
-   # Install backend dependencies
-   cd backend
-   npm install
-   
-   # Install frontend dependencies
-   cd ../frontend
-   npm install
+   npm run install:all
    ```
 
 3. **Set up environment variables**
@@ -56,9 +50,9 @@ This application provides a complete PDF workflow solution:
    nano .env
    ```
 
-4. **Set up the database**
+4. **Set up the database (optional)**
    ```bash
-   cd backend
+   cd server
    npx prisma migrate dev
    npx prisma generate
    ```
@@ -71,7 +65,7 @@ Create a `.env` file in the root directory with the following variables:
 # Server Configuration
 NODE_ENV=development
 PORT=3001
-FRONTEND_URL=http://localhost:3000
+CLIENT_URL=http://localhost:5173
 
 # Database
 DATABASE_URL="postgresql://username:password@localhost:5432/pdf_annotation"
@@ -89,7 +83,7 @@ UPLOAD_DIR=./uploads
 MAX_FILE_SIZE=10485760  # 10MB in bytes
 
 # Security
-CORS_ORIGIN=http://localhost:3000
+CORS_ORIGIN=http://localhost:5173
 RATE_LIMIT_WINDOW_MS=900000  # 15 minutes
 RATE_LIMIT_MAX_REQUESTS=100
 ```
@@ -98,43 +92,40 @@ RATE_LIMIT_MAX_REQUESTS=100
 
 ### Development Mode
 
-1. **Start the backend server**
-   ```bash
-   cd backend
-   npm run dev
-   ```
-   The backend will run on `http://localhost:3001`
+Run both server and client concurrently:
+```bash
+npm run dev
+```
 
-2. **Start the frontend application**
-   ```bash
-   cd frontend
-   npm start
-   ```
-   The frontend will run on `http://localhost:3000`
+This will start:
+- **Server**: `http://localhost:3001`
+- **Client**: `http://localhost:5173`
+
+Alternatively, run them separately:
+```bash
+# Terminal 1 - Start the server
+npm run dev:server
+
+# Terminal 2 - Start the client
+npm run dev:client
+```
 
 ### Production Mode
 
 1. **Build the application**
    ```bash
-   # Build backend
-   cd backend
-   npm run build
-   
-   # Build frontend
-   cd ../frontend
    npm run build
    ```
 
 2. **Start the production server**
    ```bash
-   cd backend
    npm start
    ```
 
 ## Usage Workflow
 
 ### 1. Upload PDF
-- Access the web interface at `http://localhost:3000`
+- Access the web interface at `http://localhost:5173`
 - Click "Upload PDF" and select a PDF file
 - Maximum file size: 10MB
 - Supported formats: PDF only
@@ -285,22 +276,32 @@ We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.
 ### Development Scripts
 
 ```bash
-# Backend development
-cd backend
+# Root-level scripts
+npm run install:all   # Install dependencies for both server and client
+npm run dev           # Start both server and client in development mode
+npm run dev:server    # Start server only
+npm run dev:client    # Start client only
+npm run build         # Build both server and client for production
+npm run start         # Start production server
+npm run test          # Run tests for both server and client
+npm run lint          # Run linting for both server and client
+
+# Server development
+cd server
 npm run dev          # Start development server
 npm run build        # Build for production
 npm run test         # Run tests
 npm run lint         # Run linting
 
-# Frontend development
-cd frontend
-npm start            # Start development server
+# Client development
+cd client
+npm run dev          # Start development server
 npm run build        # Build for production
 npm run test         # Run tests
 npm run lint         # Run linting
 
-# Database
-cd backend
+# Database (if Prisma is configured)
+cd server
 npx prisma migrate dev    # Run migrations
 npx prisma studio         # Open database viewer
 ```

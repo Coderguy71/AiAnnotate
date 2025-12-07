@@ -87,7 +87,8 @@ function App() {
         
         await page.render({
           canvasContext: context,
-          viewport: viewport
+          viewport: viewport,
+          canvas: canvas
         }).promise;
         
         pageImages.push(canvas.toDataURL());

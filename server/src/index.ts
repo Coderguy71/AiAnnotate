@@ -14,11 +14,11 @@ dotenv.config();
 
 const app: Application = express();
 const PORT = process.env.PORT || 3001;
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
 
 // Middleware
 app.use(cors({
-  origin: FRONTEND_URL,
+  origin: CLIENT_URL,
   credentials: true,
 }));
 
@@ -60,7 +60,7 @@ app.listen(PORT, () => {
   console.log(`PDF Annotation Service`);
   console.log(`===========================================`);
   console.log(`Server running on port ${PORT}`);
-  console.log(`Frontend URL: ${FRONTEND_URL}`);
+  console.log(`Client URL: ${CLIENT_URL}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`===========================================`);
 });
