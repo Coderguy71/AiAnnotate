@@ -20,8 +20,13 @@ pdf-annotation-service/
 │   │   ├── index.ts           # Entry point
 │   │   ├── routes/            # API route handlers
 │   │   ├── utils/             # Utility functions
+│   │   │   ├── pdfAnnotator.ts      # Fuzzy text matching & annotation
+│   │   │   ├── pdfExtractor.ts      # PDF text extraction
+│   │   │   ├── groqService.ts       # Groq API integration
+│   │   │   └── __tests__/           # Unit tests
 │   │   ├── types/             # TypeScript type definitions
 │   │   └── examples/          # Usage examples
+│   ├── FUZZY_MATCHING.md      # Fuzzy matching documentation
 │   ├── tsconfig.json          # TypeScript configuration
 │   ├── .eslintrc.json         # ESLint configuration
 │   └── package.json           # Server dependencies

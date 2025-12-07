@@ -200,7 +200,31 @@ async function applyAnnotation(
 }
 
 /**
- * Finds the position of text in the document
+ * Normalizes text for better matching:
+ * - Collapses multiple spaces/newlines to single space
+ * - Trims leading/trailing whitespace
+ * - Normalizes quotes and dashes
+ */
+function normalizeText(text: string): string {
+  return text
+    // Replace all whitespace (including newlines, tabs) with single space
+    .replace(/\s+/g, ' ')
+    // Normalize quotes
+    .replace(/['']/g, "'")
+    .replace(/[""]/g, '"')
+    // Normalize dashes
+    .replace(/[–—]/g, '-')
+    .trim();
+}
+
+/**
+ * Finds the position of text in the document using multiple matching strategies
+ * 
+ * Strategy order:
+ * 1. Exact match (after normalization)
+ * 2. Partial match with first 50 chars
+ * 3. Partial match with first 30 chars
+ * 4. Fuzzy match with Levenshtein distance
  * 
  * Note: This is a simplified implementation that estimates text position.
  * In a production environment, you would want to use a more sophisticated
@@ -215,39 +239,80 @@ function findTextPosition(
     ? instruction.text
     : instruction.text.toLowerCase();
 
+  // Normalize the search text
+  const normalizedSearchText = normalizeText(searchText);
+  
+  console.log(`[PDF Annotator] Searching for text: "${instruction.text.substring(0, 50)}..."`);
+  console.log(`[PDF Annotator] Normalized search text: "${normalizedSearchText.substring(0, 50)}..."`);
+
   // Determine which pages to search
   const pagesToSearch = instruction.pageNumber
     ? extractedText.pages.filter((p: any) => p.pageNumber === instruction.pageNumber)
     : extractedText.pages;
+
+  console.log(`[PDF Annotator] Searching ${pagesToSearch.length} page(s)`);
 
   for (const page of pagesToSearch) {
     const pageText = instruction.caseSensitive
       ? page.text
       : page.text.toLowerCase();
 
-    // Simple string search
-    let index = pageText.indexOf(searchText);
+    const normalizedPageText = normalizeText(pageText);
     
-    // Try fuzzy matching if exact match fails
-    if (index === -1 && options.matchTolerance > 0) {
-      index = fuzzySearch(pageText, searchText, options.matchTolerance);
+    console.log(`[PDF Annotator] Checking page ${page.pageNumber} (${normalizedPageText.length} chars)`);
+
+    // Strategy 1: Exact match on normalized text
+    let index = normalizedPageText.indexOf(normalizedSearchText);
+    if (index !== -1) {
+      console.log(`[PDF Annotator] ✓ Found exact match on page ${page.pageNumber} at index ${index}`);
+      return createTextPosition(page.pageNumber, instruction.text, index, normalizedSearchText);
+    }
+    console.log('[PDF Annotator] ✗ Exact match failed, trying partial match (50 chars)');
+
+    // Strategy 2: Partial match with first 50 chars
+    if (normalizedSearchText.length > 50) {
+      const partialSearch50 = normalizedSearchText.substring(0, 50);
+      index = normalizedPageText.indexOf(partialSearch50);
+      if (index !== -1) {
+        console.log(`[PDF Annotator] ✓ Found partial match (50 chars) on page ${page.pageNumber} at index ${index}`);
+        return createTextPosition(page.pageNumber, instruction.text, index, partialSearch50);
+      }
+      console.log('[PDF Annotator] ✗ Partial match (50 chars) failed, trying partial match (30 chars)');
     }
 
-    if (index !== -1) {
-      // Estimate position based on text index
-      // This is a simplified approach - actual coordinates would require more sophisticated parsing
-      const position: TextPosition = {
-        pageNumber: page.pageNumber,
-        text: instruction.text,
-        // Estimate x, y based on character position in text
-        // These are rough estimates and will be refined in the drawing functions
-        x: 50, // Start with left margin
-        y: 700 - (Math.floor(index / 100) * 20), // Rough vertical position
-        width: instruction.text.length * 6, // Rough width estimate
-        height: 12 // Standard text height
-      };
+    // Strategy 3: Partial match with first 30 chars
+    if (normalizedSearchText.length > 30) {
+      const partialSearch30 = normalizedSearchText.substring(0, 30);
+      index = normalizedPageText.indexOf(partialSearch30);
+      if (index !== -1) {
+        console.log(`[PDF Annotator] ✓ Found partial match (30 chars) on page ${page.pageNumber} at index ${index}`);
+        return createTextPosition(page.pageNumber, instruction.text, index, partialSearch30);
+      }
+      console.log('[PDF Annotator] ✗ Partial match (30 chars) failed, trying fuzzy match');
+    }
 
-      return position;
+    // Strategy 4: Fuzzy matching with Levenshtein distance
+    if (options.matchTolerance > 0) {
+      const fuzzyResult = fuzzySearchWithNormalization(
+        normalizedPageText,
+        normalizedSearchText,
+        options.matchTolerance
+      );
+      if (fuzzyResult.index !== -1) {
+        console.log(
+          `[PDF Annotator] ✓ Found fuzzy match on page ${page.pageNumber} at index ${fuzzyResult.index} ` +
+          `(distance: ${fuzzyResult.distance}, matched: "${fuzzyResult.matchedText.substring(0, 30)}...")`
+        );
+        return createTextPosition(page.pageNumber, instruction.text, fuzzyResult.index, fuzzyResult.matchedText);
+      }
+      console.log('[PDF Annotator] ✗ Fuzzy match failed');
+    }
+
+    // Try original exact match as fallback (without normalization)
+    index = pageText.indexOf(searchText);
+    if (index !== -1) {
+      console.log(`[PDF Annotator] ✓ Found exact match (non-normalized) on page ${page.pageNumber} at index ${index}`);
+      return createTextPosition(page.pageNumber, instruction.text, index, searchText);
     }
 
     // If firstMatchOnly is true, we stop after checking all specified pages once
@@ -256,26 +321,64 @@ function findTextPosition(
     }
   }
 
+  console.log('[PDF Annotator] ✗ Text not found after trying all strategies');
   return null;
 }
 
 /**
- * Performs fuzzy text search with tolerance
- * Returns index of best match or -1 if no match within tolerance
+ * Creates a TextPosition object with estimated coordinates
  */
-function fuzzySearch(text: string, pattern: string, tolerance: number): number {
+function createTextPosition(
+  pageNumber: number,
+  originalText: string,
+  charIndex: number,
+  matchedText: string
+): TextPosition {
+  return {
+    pageNumber,
+    text: originalText,
+    // Estimate x, y based on character position in text
+    // These are rough estimates and will be refined in the drawing functions
+    x: 50, // Start with left margin
+    y: 700 - (Math.floor(charIndex / 100) * 20), // Rough vertical position
+    width: matchedText.length * 6, // Rough width estimate
+    height: 12 // Standard text height
+  };
+}
+
+/**
+ * Performs fuzzy text search with tolerance on normalized text
+ * Returns best match with details or -1 if no match within tolerance
+ */
+function fuzzySearchWithNormalization(
+  text: string,
+  pattern: string,
+  tolerance: number
+): { index: number; distance: number; matchedText: string } {
   const maxDistance = Math.floor(pattern.length * tolerance);
+  let bestMatch = { index: -1, distance: Infinity, matchedText: '' };
   
-  for (let i = 0; i <= text.length - pattern.length; i++) {
+  // Limit search scope for performance
+  const maxSearchLength = Math.min(text.length, pattern.length * 100);
+  
+  for (let i = 0; i <= Math.min(text.length - pattern.length, maxSearchLength); i++) {
     const substring = text.substring(i, i + pattern.length);
     const distance = levenshteinDistance(substring, pattern);
     
+    // If we find an exact or very close match, return immediately
     if (distance <= maxDistance) {
-      return i;
+      if (distance < bestMatch.distance) {
+        bestMatch = { index: i, distance, matchedText: substring };
+      }
+      
+      // If we found a very good match, return early
+      if (distance <= 2) {
+        return bestMatch;
+      }
     }
   }
   
-  return -1;
+  return bestMatch;
 }
 
 /**
