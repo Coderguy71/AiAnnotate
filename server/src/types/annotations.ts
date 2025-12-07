@@ -133,7 +133,7 @@ export const DEFAULT_COLORS: Record<AnnotationType, AnnotationColor> = {
  * Default annotation options
  */
 export const DEFAULT_ANNOTATION_OPTIONS: Required<AnnotationOptions> = {
-  matchTolerance: 0.1,
+  matchTolerance: 0.15,
   firstMatchOnly: true,
   skipNotFound: true,
   logNotFound: true

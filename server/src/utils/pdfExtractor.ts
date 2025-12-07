@@ -13,10 +13,12 @@
  */
 
 import pdf from 'pdf-parse';
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { ExtractedText, PageText, PDFMetadata } from '../types/annotations';
 
 /**
  * Extracts text content from a PDF buffer with page-level granularity
+ * Uses pdfjs-dist for accurate page-by-page text extraction
  * 
  * @param pdfBuffer - The PDF file as a Buffer
  * @returns Promise<ExtractedText> - Structured text data with page information
@@ -34,39 +36,55 @@ import { ExtractedText, PageText, PDFMetadata } from '../types/annotations';
  */
 export async function extractTextFromPDF(pdfBuffer: Buffer): Promise<ExtractedText> {
   try {
-    // Extract pages with individual text content
+    // Extract pages with individual text content using pdfjs-dist for accurate extraction
     const pages: PageText[] = [];
     
-    // Parse to get individual page texts
-    const pdfData = await pdf(pdfBuffer);
+    // Use pdfjs-dist for accurate page-by-page extraction
+    const uint8Array = new Uint8Array(pdfBuffer);
+    const loadingTask = pdfjsLib.getDocument({ data: uint8Array });
+    const pdfDoc = await loadingTask.promise;
+    const numPages = pdfDoc.numPages;
     
-    // pdf-parse doesn't directly provide per-page text, so we need to work around this
-    // We'll use the text and estimate page breaks, or parse again with page renderer
-    const fullText = pdfData.text;
-    const numPages = pdfData.numpages;
-    
-    // For better page-level extraction, we'll use a different approach
-    // This is a simplified version - in production, you might want to use pdfjs-dist directly
-    // for more precise page-level control
-    
-    // Split text roughly by page count (this is approximate)
-    // In a real implementation, you'd want to use pdfjs-dist directly for accurate page extraction
-    const textLength = fullText.length;
-    const roughPageSize = Math.ceil(textLength / numPages);
-    
-    for (let i = 0; i < numPages; i++) {
-      const start = i * roughPageSize;
-      const end = Math.min((i + 1) * roughPageSize, textLength);
-      const pageText = fullText.substring(start, end).trim();
+    console.log(`[PDF Extractor] Loading ${numPages} pages with pdfjs-dist`);
+
+    // Extract text from each page
+    for (let i = 1; i <= numPages; i++) {
+      const page = await pdfDoc.getPage(i);
+      const textContent = await page.getTextContent();
+      
+      // Combine text items into a single string with proper spacing
+      let pageText = '';
+      let lastY = -1;
+      
+      textContent.items.forEach((item: any, index: number) => {
+        // Handle text items (some items might not have str property)
+        if ('str' in item && item.str) {
+          const currentY = item.transform ? item.transform[5] : 0;
+          
+          // Add newline if we've moved to a different Y position (new line)
+          if (lastY !== -1 && Math.abs(currentY - lastY) > 5) {
+            pageText += '\n';
+          } else if (index > 0 && !pageText.endsWith(' ') && !pageText.endsWith('\n')) {
+            // Add space between items on same line
+            pageText += ' ';
+          }
+          
+          pageText += item.str;
+          lastY = currentY;
+        }
+      });
       
       pages.push({
-        pageNumber: i + 1,
-        text: pageText,
+        pageNumber: i,
+        text: pageText.trim(),
         lines: pageText.split('\n').filter(line => line.trim().length > 0)
       });
+      
+      console.log(`[PDF Extractor] Extracted page ${i}: ${pageText.length} chars`);
     }
 
-    // Extract metadata
+    // Extract metadata using pdf-parse
+    const pdfData = await pdf(pdfBuffer);
     const metadata: PDFMetadata = {
       title: pdfData.info?.Title,
       author: pdfData.info?.Author,

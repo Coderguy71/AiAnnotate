@@ -56,6 +56,11 @@ export async function generateAnnotationsWithGroq(
 You MUST respond with ONLY a valid JSON array (no markdown, no code blocks, just plain JSON).
 Each annotation must have: page (number), text (string snippet to annotate), action (one of: 'highlight', 'underline', 'comment').
 Optional: comment (string) for the 'comment' action.
+
+IMPORTANT: For the "text" field, use SHORT exact phrases from the document (3-8 words). 
+Use the EXACT wording as it appears in the document to ensure accurate matching.
+Avoid using very long text snippets.
+
 Example format: [{"page": 1, "text": "important phrase", "action": "highlight"}]`;
 
     const userMessage = `${formattedText}
