@@ -19,3 +19,8 @@ export {
 export {
   annotatePDF
 } from './pdfAnnotator';
+
+// Export Groq AI service
+export {
+  generateAnnotationsWithGroq
+} from './groqService';

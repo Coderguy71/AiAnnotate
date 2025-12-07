@@ -5,11 +5,12 @@
  * It demonstrates how to use the PDF utilities in a clean, type-safe manner.
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import { annotatePDF } from '../utils/pdfAnnotator';
 import { extractTextFromPDF, formatForPrompt } from '../utils/pdfExtractor';
-import { AnnotationType, AnnotationRequest } from '../types/annotations';
+import { generateAnnotationsWithGroq } from '../utils/groqService';
+import { AnnotationRequest } from '../types/annotations';
 
 const router = Router();
 
@@ -19,7 +20,7 @@ const upload = multer({
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB limit
   },
-  fileFilter: (req, file, cb) => {
+  fileFilter: (_req, file, cb) => {
     if (file.mimetype === 'application/pdf') {
       cb(null, true);
     } else {
@@ -28,93 +29,232 @@ const upload = multer({
   },
 });
 
+// Error handling middleware for multer
+const handleMulterError = (
+  err: Error,
+  _req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      res.status(413).json({
+        error: 'File too large',
+        message: 'PDF file must be smaller than 10MB',
+      });
+      return;
+    }
+    if (err.code === 'LIMIT_FILE_COUNT') {
+      res.status(400).json({
+        error: 'Invalid request',
+        message: 'Only one file is allowed',
+      });
+      return;
+    }
+    res.status(400).json({
+      error: 'Upload error',
+      message: err.message,
+    });
+    return;
+  }
+  if (err instanceof Error && err.message === 'Only PDF files are allowed') {
+    res.status(400).json({
+      error: 'Invalid file type',
+      message: 'Only PDF files are allowed',
+    });
+    return;
+  }
+  next(err);
+};
+
 /**
  * POST /api/annotate
  * 
- * Annotates a PDF based on provided instructions or AI-generated annotations.
+ * Annotates a PDF based on provided instructions or AI-generated annotations via Groq.
  * 
  * Request body (multipart/form-data):
  * - pdf: PDF file (required)
- * - prompt: Optional user prompt for AI-based annotation generation
+ * - prompt: Optional user prompt for AI-based annotation generation via Groq
  * - instructions: Optional JSON string of AnnotationInstruction[]
+ * - timeout: Optional timeout in milliseconds for Groq API (default: 30000)
  * 
  * Response:
  * - Content-Type: application/pdf
  * - Body: Annotated PDF file
+ * 
+ * Status Codes:
+ * - 200: Success
+ * - 400: Validation error (missing file, invalid JSON, etc.)
+ * - 413: File too large
+ * - 500: Server error (API failure, annotation error)
+ * - 504: Timeout (Groq API request timeout)
  */
-router.post('/annotate', upload.single('pdf'), async (req: Request, res: Response) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No PDF file uploaded' });
-    }
-
-    const pdfBuffer = req.file.buffer;
-    const userPrompt = req.body.prompt || '';
-    const instructionsJson = req.body.instructions;
-
-    console.log(`[Annotate Route] Processing PDF: ${req.file.originalname} (${req.file.size} bytes)`);
-    console.log(`[Annotate Route] User prompt: ${userPrompt || 'None'}`);
-
-    // Extract text from PDF
-    const extractedText = await extractTextFromPDF(pdfBuffer);
-    console.log(`[Annotate Route] Extracted text from ${extractedText.totalPages} pages`);
-
-    // Determine annotation instructions
-    let annotationRequest: AnnotationRequest;
-
-    if (instructionsJson) {
-      // Use provided instructions
-      try {
-        const instructions = JSON.parse(instructionsJson);
-        annotationRequest = { instructions };
-        console.log(`[Annotate Route] Using ${instructions.length} provided instructions`);
-      } catch (error) {
-        return res.status(400).json({ error: 'Invalid instructions JSON' });
+router.post(
+  '/annotate',
+  upload.single('pdf'),
+  handleMulterError,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      // Validate file upload
+      if (!req.file) {
+        res.status(400).json({
+          error: 'Validation error',
+          message: 'No PDF file uploaded. Please provide a PDF file.',
+        });
+        return;
       }
-    } else {
-      // Generate sample annotations or use AI (Groq integration would go here)
-      // For now, we'll create demo annotations based on the document content
-      annotationRequest = await generateAnnotations(extractedText, userPrompt);
-      console.log(`[Annotate Route] Generated ${annotationRequest.instructions.length} annotations`);
-    }
 
-    // Apply annotations to PDF
-    const result = await annotatePDF(pdfBuffer, annotationRequest);
+      const pdfBuffer = req.file.buffer;
+      const userPrompt = req.body.prompt ? String(req.body.prompt).trim() : '';
+      const instructionsJson = req.body.instructions;
+      const timeout = req.body.timeout ? parseInt(req.body.timeout, 10) : 30000;
 
-    if (!result.success || !result.pdfBuffer) {
-      console.error(`[Annotate Route] Annotation failed:`, result.warnings);
-      return res.status(500).json({
-        error: 'Failed to annotate PDF',
-        details: result.warnings,
-        results: result.results,
+      console.log(
+        `[Annotate Route] Processing PDF: ${req.file.originalname} (${req.file.size} bytes)`
+      );
+      console.log(`[Annotate Route] User prompt provided: ${userPrompt ? 'Yes' : 'No'}`);
+      console.log(`[Annotate Route] Request timeout: ${timeout}ms`);
+
+      // Extract text from PDF
+      console.log('[Annotate Route] Extracting text from PDF...');
+      let extractedText;
+      try {
+        extractedText = await extractTextFromPDF(pdfBuffer);
+      } catch (error) {
+        console.error('[Annotate Route] PDF extraction failed:', error);
+        res.status(400).json({
+          error: 'Invalid PDF',
+          message: 'Failed to extract text from PDF. The file may be corrupted or unsupported.',
+        });
+        return;
+      }
+
+      console.log(`[Annotate Route] Extracted text from ${extractedText.totalPages} pages`);
+
+      // Determine annotation instructions
+      let annotationRequest: AnnotationRequest;
+
+      if (instructionsJson) {
+        // Use provided instructions
+        try {
+          const instructions = JSON.parse(instructionsJson);
+          if (!Array.isArray(instructions)) {
+            res.status(400).json({
+              error: 'Validation error',
+              message: 'instructions must be a JSON array',
+            });
+            return;
+          }
+          annotationRequest = { instructions };
+          console.log(`[Annotate Route] Using ${instructions.length} provided instructions`);
+        } catch (error) {
+          res.status(400).json({
+            error: 'Validation error',
+            message: 'Invalid instructions JSON format',
+          });
+          return;
+        }
+      } else if (userPrompt) {
+        // Generate annotations using Groq AI
+        console.log('[Annotate Route] Generating annotations with Groq AI...');
+        try {
+          const instructions = await generateAnnotationsWithGroq(
+            extractedText,
+            userPrompt,
+            timeout
+          );
+          annotationRequest = { instructions };
+          console.log(
+            `[Annotate Route] Generated ${instructions.length} annotations from Groq AI`
+          );
+        } catch (error) {
+          console.error('[Annotate Route] Groq API error:', error);
+          if (error instanceof Error && error.message.includes('timeout')) {
+            res.status(504).json({
+              error: 'Gateway timeout',
+              message: 'Groq API request timed out. Please try again with a shorter prompt.',
+            });
+            return;
+          }
+          res.status(500).json({
+            error: 'AI annotation failed',
+            message: error instanceof Error ? error.message : 'Failed to generate annotations',
+          });
+          return;
+        }
+      } else {
+        // No instructions and no prompt - return error
+        res.status(400).json({
+          error: 'Validation error',
+          message: 'Either provide a prompt for AI annotation or instructions JSON',
+        });
+        return;
+      }
+
+      // Validate that we have instructions
+      if (!annotationRequest.instructions || annotationRequest.instructions.length === 0) {
+        console.log('[Annotate Route] No annotations to apply');
+        // Return original PDF if no annotations
+        res.set({
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': 'attachment; filename="annotated.pdf"',
+          'Content-Length': pdfBuffer.length,
+        });
+        res.send(pdfBuffer);
+        return;
+      }
+
+      // Apply annotations to PDF
+      console.log('[Annotate Route] Applying annotations to PDF...');
+      let result;
+      try {
+        result = await annotatePDF(pdfBuffer, annotationRequest);
+      } catch (error) {
+        console.error('[Annotate Route] Annotation application failed:', error);
+        res.status(500).json({
+          error: 'Annotation failed',
+          message: error instanceof Error ? error.message : 'Failed to apply annotations to PDF',
+        });
+        return;
+      }
+
+      if (!result.success || !result.pdfBuffer) {
+        console.error(`[Annotate Route] Annotation failed:`, result.warnings);
+        res.status(500).json({
+          error: 'Annotation failed',
+          details: result.warnings,
+          results: result.results,
+        });
+        return;
+      }
+
+      // Log results
+      const successCount = result.results.filter(r => r.success).length;
+      console.log(
+        `[Annotate Route] Successfully applied ${successCount}/${result.results.length} annotations`
+      );
+
+      if (result.warnings && result.warnings.length > 0) {
+        console.warn(`[Annotate Route] Warnings:`, result.warnings);
+      }
+
+      // Return annotated PDF
+      res.set({
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': 'attachment; filename="annotated.pdf"',
+        'Content-Length': result.pdfBuffer.length,
+      });
+
+      res.send(result.pdfBuffer);
+    } catch (error) {
+      console.error('[Annotate Route] Unexpected error:', error);
+      res.status(500).json({
+        error: 'Internal server error',
+        message: error instanceof Error ? error.message : 'An unexpected error occurred',
       });
     }
-
-    // Log results
-    const successCount = result.results.filter(r => r.success).length;
-    console.log(`[Annotate Route] Successfully applied ${successCount}/${result.results.length} annotations`);
-    
-    if (result.warnings && result.warnings.length > 0) {
-      console.warn(`[Annotate Route] Warnings:`, result.warnings);
-    }
-
-    // Return annotated PDF
-    res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': 'attachment; filename="annotated.pdf"',
-      'Content-Length': result.pdfBuffer.length,
-    });
-
-    res.send(result.pdfBuffer);
-
-  } catch (error) {
-    console.error('[Annotate Route] Error processing request:', error);
-    res.status(500).json({
-      error: 'Internal server error',
-      message: error instanceof Error ? error.message : 'Unknown error',
-    });
   }
-});
+);
 
 /**
  * POST /api/extract
@@ -126,99 +266,54 @@ router.post('/annotate', upload.single('pdf'), async (req: Request, res: Respons
  * 
  * Response:
  * - Content-Type: application/json
- * - Body: ExtractedText object
+ * - Body: ExtractedText object with extracted text and metadata
+ * 
+ * Status Codes:
+ * - 200: Success
+ * - 400: Validation error (missing file, invalid PDF, etc.)
+ * - 413: File too large
+ * - 500: Server error
  */
-router.post('/extract', upload.single('pdf'), async (req: Request, res: Response) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No PDF file uploaded' });
-    }
+router.post(
+  '/extract',
+  upload.single('pdf'),
+  handleMulterError,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      if (!req.file) {
+        res.status(400).json({
+          error: 'Validation error',
+          message: 'No PDF file uploaded. Please provide a PDF file.',
+        });
+        return;
+      }
 
-    const pdfBuffer = req.file.buffer;
-    console.log(`[Extract Route] Extracting text from: ${req.file.originalname}`);
+      const pdfBuffer = req.file.buffer;
+      console.log(`[Extract Route] Extracting text from: ${req.file.originalname}`);
 
-    const extractedText = await extractTextFromPDF(pdfBuffer);
-    
-    res.json({
-      success: true,
-      data: extractedText,
-      formatted: formatForPrompt(extractedText, { maxCharsPerPage: 500 }),
-    });
+      try {
+        const extractedText = await extractTextFromPDF(pdfBuffer);
 
-  } catch (error) {
-    console.error('[Extract Route] Error processing request:', error);
-    res.status(500).json({
-      error: 'Failed to extract text from PDF',
-      message: error instanceof Error ? error.message : 'Unknown error',
-    });
-  }
-});
-
-/**
- * Helper function to generate sample annotations
- * In a real application, this would call Groq API to generate intelligent annotations
- */
-async function generateAnnotations(extractedText: any, userPrompt: string): Promise<AnnotationRequest> {
-  // This is a placeholder for AI-generated annotations
-  // In production, you would:
-  // 1. Format the extracted text for Groq
-  // 2. Send a prompt to Groq API
-  // 3. Parse Groq's response to generate annotation instructions
-  
-  const instructions = [];
-
-  // Demo: Create some sample annotations based on common patterns
-  for (const page of extractedText.pages) {
-    const text = page.text.toLowerCase();
-    
-    // Look for common patterns to highlight
-    if (text.includes('important') || text.includes('note')) {
-      const match = page.text.match(/(important|note)[^.!?]*/i);
-      if (match) {
-        instructions.push({
-          type: AnnotationType.HIGHLIGHT,
-          text: match[0].substring(0, 50),
-          pageNumber: page.pageNumber,
+        res.json({
+          success: true,
+          data: extractedText,
+          formatted: formatForPrompt(extractedText, { maxCharsPerPage: 500 }),
+        });
+      } catch (error) {
+        console.error('[Extract Route] PDF extraction failed:', error);
+        res.status(400).json({
+          error: 'Invalid PDF',
+          message: 'Failed to extract text from PDF. The file may be corrupted or unsupported.',
         });
       }
-    }
-    
-    // Look for conclusions or summaries
-    if (text.includes('conclusion') || text.includes('summary')) {
-      const match = page.text.match(/(conclusion|summary)[^.!?]*/i);
-      if (match) {
-        instructions.push({
-          type: AnnotationType.UNDERLINE,
-          text: match[0].substring(0, 50),
-          pageNumber: page.pageNumber,
-        });
-      }
+    } catch (error) {
+      console.error('[Extract Route] Unexpected error:', error);
+      res.status(500).json({
+        error: 'Internal server error',
+        message: error instanceof Error ? error.message : 'An unexpected error occurred',
+      });
     }
   }
-
-  // If user provided a prompt, add a comment about it
-  if (userPrompt) {
-    instructions.push({
-      type: AnnotationType.COMMENT,
-      text: extractedText.pages[0]?.text.substring(0, 20) || 'Document',
-      comment: `User request: ${userPrompt.substring(0, 50)}`,
-      pageNumber: 1,
-    });
-  }
-
-  // If no annotations were generated, add a default one
-  if (instructions.length === 0 && extractedText.pages.length > 0) {
-    const firstPageText = extractedText.pages[0].text;
-    const snippet = firstPageText.substring(0, Math.min(30, firstPageText.length));
-    
-    instructions.push({
-      type: AnnotationType.HIGHLIGHT,
-      text: snippet,
-      pageNumber: 1,
-    });
-  }
-
-  return { instructions };
-}
+);
 
 export default router;
